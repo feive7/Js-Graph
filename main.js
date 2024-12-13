@@ -13,6 +13,7 @@ var viewport = {
 }
 const mouse = {
   down: false,
+  zooming: false,
   start: {
     x: 0,
     y: 0
@@ -45,32 +46,53 @@ function Circle(center,radius,color = "black") {
 }
 function Display() {
   Clear();
-  //Circle(GetPoint("mouse"), 10);
-  Circle(GetPoint("screenCenter"),10,"red");
-  Circle(GetPoint("mouse"),10,"blue");
-  Circle({x: 1, y: 1}, 10);
-  Circle({x: -1, y: -1}, 10);
-  const mousepos = "(" + mouse.pos.x + ", " + mouse.pos.y + ")";
-  const state = (mouse.down ? "Left Click" : "");
-  ctx.fillText(mousepos,0,20);
-  ctx.fillText(state,0,50);
-  ctx.fillText(JSON.stringify(PixelAt(GetPoint("center"))),0,80);
-  ctx.fillText("Zoom: " + viewport.zoom,0,100);
-  if(mouse.down) {
-    //ctx.beginPath();
-    //ctx.moveTo(mouse.start.x,mouse.start.y);
-    //ctx.lineTo(mouse.pos.x,mouse.pos.y);
-    //ctx.stroke();
-    viewport = Pan(mouse.viewport, PointMath(PointMath(PointAt(mouse.pos), "subtract", PointAt(mouse.start)),"negate"));
+  if(mouse.down || mouse.zooming) {
+    Render(10,10);
+  } else {
+    Render(100,1);
   }
 }
-function PointMath(p1,operation,p2 = false, extra = false) {
-  switch(operation) {
-    case("add"): return {x: p1.x + p2.x, y: p1.y + p2.y};
-    case("subtract"): return {x: p1.x - p2.x, y: p1.y - p2.y};
-    case("negate"): return {x: -p1.x, y: -p1.y};
-    case("nmultiply"): return {x: p1.x * p2, y: p1.y * p2};
-    case("ndivide"): return {x: p1.x / p2, y: p1.y / p2};
+function Render(iterations = 10, res = 1) {
+  for(var xx = 0; xx < canvas.width / res; xx++) {
+    for(var yy = 0; yy < canvas.height / res; yy++) {
+      const c = PointAt(xx*res,yy*res);
+      var z = c;
+      for(var i = 0; i < iterations; i++) {
+        z = Iterate(z,c);
+        if(PointMath(z,"magnitude") > 4) {
+          break;
+        }
+      }
+      if(PointMath(z,"magnitude") < 4) {
+        ctx.fillRect(xx*res,yy*res,res,res);
+      }
+    }
+  }
+}
+function Iterate(z,c) {
+  return {
+    x: z.x * z.x - z.y * z.y + c.x,
+    y: 2 * z.x * z.y + c.y
+  }
+}
+function PointMath(p1,type,p2 = false) {
+  switch(type) {
+      case("add"):
+      return {x: p1.x + p2.x, y: p1.y - p2.y};
+      case("subtract"):
+      return {x: p1.x - p2.x, y: p1.y - p2.y};
+      case("ndivide"):
+      return {x: p1.x / p2, y: p1.y / p2};
+      case("nmultiply"):
+      return {x: p1.x * p2, y: p1.y * p2};
+      case("negate"):
+      return {x: - p1.x, y: - p1.y};
+      case("midpoint"):
+      return {x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2};
+      case("magnitude"):
+      return Math.sqrt(p1.x * p1.x + p1.y * p1.y);
+      case("distance"):
+      return PointMath(PointMath(p1,"subtract",p2),"magnitude");
   }
 }
 function Map(x,in_min,in_max,out_min,out_max) {
@@ -111,10 +133,10 @@ function UpdateMouse(event) {
 }
 function Pan(viewport, point) {
   const newViewport = {
-    minx: viewport.minx + point.x,
-    maxx: viewport.maxx + point.x,
-    miny: viewport.miny + point.y,
-    maxy: viewport.maxy + point.y,
+    minx: viewport.minx - point.x,
+    maxx: viewport.maxx - point.x,
+    miny: viewport.miny - point.y,
+    maxy: viewport.maxy - point.y,
     zoom: viewport.zoom
   };
   return newViewport;
@@ -128,14 +150,24 @@ function GetPoint(preset) {
   }
 }
 function Zoom(viewport, amount) {
+  amount = Math.pow(2, amount);
   const newViewport = {
     minx: viewport.minx / amount,
     maxx: viewport.maxx / amount,
     miny: viewport.miny / amount,
     maxy: viewport.maxy / amount,
-    zoom: viewport.zoom / amount
+    zoom: viewport.zoom * amount
   };
   return newViewport;
+}
+function ZoomPoint(viewport, point, amount) {
+  var newviewport = Pan(viewport, point);
+  newviewport = Zoom(newviewport, amount);
+  newviewport = Pan(newviewport, PointMath(point,"negate"));
+  if(newviewport.zoom < 1) {
+    return viewport;
+  }
+  return newviewport;
 }
 canvas.addEventListener("mousedown", function(event) {
   event.preventDefault();
@@ -149,6 +181,8 @@ canvas.addEventListener("mousemove", function(event) {
   event.preventDefault();
   mouse.pos.x = event.pageX;
   mouse.pos.y = event.pageY;
+  if(mouse.down)
+    viewport = Pan(mouse.viewport, PointMath(PointAt(mouse.pos), "subtract", PointAt(mouse.start)));
   Display();
 });
 canvas.addEventListener("mouseup", function(event) {
@@ -156,18 +190,14 @@ canvas.addEventListener("mouseup", function(event) {
   mouse.down = false;
   Display();
 });
-var scale = 1;
-var orgnx = 0;
-var orgny = 0;
-var visibleWidth = canvas.width;
-var visibleHeight = canvas.height;
 canvas.addEventListener("mousewheel", function(event) {
   event.preventDefault();
+  mouse.zooming = true;
   const zoom = (event.wheelDelta > 0 ? 1 : -1);
-  const pan = PointMath(GetPoint("mouse"),"subtract",GetPoint("screenCenter"));
-  viewport = Pan(viewport, PointMath(pan,"nmultiply",zoom));
-  viewport = Zoom(viewport, Math.pow(2,zoom));
+  const pan = PointMath(GetPoint("mouse"),"subtract",GetPoint("mouseStart"));
+  viewport = ZoomPoint(viewport, GetPoint("mouse"), (event.wheelDeltaY > 0 ? 1 : -1) * .1);
   //viewport = Pan(viewport, pan);
   Display();
+  mouse.zooming = false;
 });
 Display()
